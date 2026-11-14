@@ -227,7 +227,7 @@ async function loadCatalog(query = "") {
         button.disabled = true;
         status("catalog-status", "Preparing “" + book.title + "”…");
         try {
-          const result = await api("/api/library/open", json("POST", { google_id: book.id }));
+          const result = await api("/api/library/open", json("POST", { id: book.id }));
           if (opener === state.opening) openBook(result);
           status("catalog-status");
         } catch (error) {

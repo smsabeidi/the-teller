@@ -1,4 +1,39 @@
-# Deploy VoiceEmo Studio
+# Deploy The Teller
+
+## Private server and iPhone
+
+Run the native app against a single personal server. The server key grants access to one library and works across installs. The app stores it in iOS Keychain. The server software and on-device voices work without paid provider keys.
+
+1. From the repository, create the Python environment and initialize the server.
+
+   ```sh
+   python3 -m venv .venv
+   .venv/bin/python -m pip install -r requirements.txt
+   ./scripts/personal-server.sh init
+   ./scripts/personal-server.sh start
+   ```
+
+   The initializer creates a gitignored `.env` readable only by your user. If one already exists, preserve your settings and set `TELLER_ACCESS_KEY` to a new random URL-safe key of at least 32 characters. Save the key in your password manager. The server listens on `127.0.0.1:8016` and runs while the process and Mac are up.
+
+2. Connect the Mac and iPhone to the same Tailscale tailnet. On the Mac, run `tailscale serve --bg 8016` and copy the HTTPS origin it prints. The HTTPS origin must serve The Teller at its root. A private reverse proxy you already operate can also forward to `127.0.0.1:8016`. [Tailscale Serve documentation](https://tailscale.com/docs/reference/tailscale-cli/serve)
+
+3. Open `ios/TheTeller.xcodeproj` in Xcode. Add your Apple Account, select your team under **Signing & Capabilities**, choose your unlocked iPhone as the destination, and run **TheTeller**. If Xcode prompts for device trust or Developer Mode, follow the on-device instructions. Apple’s free Personal Team builds need renewed provisioning after seven days. [Run on a device](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices) · [Apple developer accounts](https://developer.apple.com/help/account/basics/about-your-developer-account)
+
+4. In The Teller, open **Settings**, enter the HTTPS origin and `TELLER_ACCESS_KEY`, then tap **Test and save**. Open a classic under **Discover**, or choose **Human narration** to stream a LibriVox recording. Personal mode starts its own library. Existing guest books stay associated with their guest session.
+
+### Expand and maintain the catalog
+
+Discover starts with 12 curated Project Gutenberg editions. To enable broader search, download the official weekly catalog into the persistent data directory and set `GUTENBERG_CATALOG_PATH` to its absolute path in `.env`. The server also accepts a gzip CSV and reloads the index when the file changes. Search records are checked against the source edition's rights before any text is fetched. [Project Gutenberg offline catalogs](https://www.gutenberg.org/ebooks/offline_catalogs.html)
+
+```sh
+mkdir -p data
+curl -fL https://www.gutenberg.org/cache/epub/feeds/pg_catalog.csv -o data/pg_catalog.csv.new
+mv data/pg_catalog.csv.new data/pg_catalog.csv
+```
+
+Stop the server before taking a snapshot. In the repository, run `python3 scripts/backup-personal.py /absolute/path/teller-backup.tar.gz` (add `--data /path/to/data` if you configured a different data directory). To restore, stop the server, move the current data directory aside, and extract the trusted backup to a staging directory. Move the extracted `data` directory back to the configured data location, then start the server. Keep your `.env` or a copy of its settings separately in your password manager. Rotate the server key by stopping the service, changing `TELLER_ACCESS_KEY`, restarting, and reconnecting the app in **Settings**.
+
+## Web studio
 
 Build the Docker image in this folder and run one instance with a persistent volume at `/app/data`. It holds the library and account database, transcripts, generated audio, and exports. The app keeps active casting and export progress in memory. A process restart interrupts those jobs, and the player can start them again.
 

@@ -27,6 +27,7 @@ final class TellerFlowTests: XCTestCase {
     @MainActor
     func testGuestImportsTextUnlocksAndReopensFromLibrary() {
         let app = XCUIApplication()
+        app.launchEnvironment["TELLER_API_BASE_URL"] = "http://127.0.0.1:8000"
         let title = "Rain on the platform " + UUID().uuidString.prefix(6)
         let story = [
             title,
@@ -72,6 +73,26 @@ final class TellerFlowTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["player-title"].label, String(title))
         XCTAssertFalse(app.buttons["continue-book"].exists)
         XCTAssertEqual(waitFor(app.buttons["player-position"]).label, savedPosition)
+    }
+
+    @MainActor
+    func testDiscoverShowsFeaturedAndSearchResults() {
+        let app = XCUIApplication()
+        app.launchEnvironment["TELLER_API_BASE_URL"] = "http://127.0.0.1:8000"
+        app.launch()
+
+        waitFor(app.tabBars.buttons["Discover"]).tap()
+        waitFor(app.buttons["discover-book-1342"])
+        let search = waitFor(app.textFields["discover-search"])
+        search.tap()
+        search.typeText("Frankenstein")
+        if app.keyboards.buttons["Search"].exists { app.keyboards.buttons["Search"].tap() }
+        waitFor(app.buttons["discover-book-84"])
+        XCTAssertFalse(app.buttons["discover-book-1342"].exists)
+
+        waitFor(app.buttons["discover-human"]).tap()
+        waitFor(app.textFields["human-audio-query"])
+        XCTAssertTrue(app.buttons["human-audio-search"].exists)
     }
 
     @discardableResult

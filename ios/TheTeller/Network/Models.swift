@@ -45,6 +45,7 @@ struct Book: Codable, Sendable, Identifiable, Equatable {
     let title: String
     let author: String
     let cover: String
+    let sourceURL: String?
     let words: Int
     let cast: [String: CastMember]
     let totalLines: Int
@@ -63,6 +64,7 @@ struct Book: Codable, Sendable, Identifiable, Equatable {
         title: String,
         author: String = "",
         cover: String = "",
+        sourceURL: String? = nil,
         words: Int = 0,
         cast: [String: CastMember] = [:],
         totalLines: Int,
@@ -78,6 +80,7 @@ struct Book: Codable, Sendable, Identifiable, Equatable {
         self.title = title
         self.author = author
         self.cover = cover
+        self.sourceURL = sourceURL
         self.words = words
         self.cast = cast
         self.totalLines = totalLines
@@ -92,6 +95,7 @@ struct Book: Codable, Sendable, Identifiable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id, title, author, cover, words, cast, unlocked, lines, chapters, provider
+        case sourceURL = "source_url"
         case totalLines = "total_lines"
         case previewLines = "preview_lines"
         case aiCast = "ai_cast"

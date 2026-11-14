@@ -1,0 +1,94 @@
+[
+  {
+    "id": 1342,
+    "title": "Pride and Prejudice",
+    "authors": ["Jane Austen"],
+    "year": "1813",
+    "categories": ["Romance", "Social fiction"],
+    "description": "Elizabeth Bennet and Mr. Darcy must reconsider their first impressions as family pressures shape their choices."
+  },
+  {
+    "id": 1661,
+    "title": "The Adventures of Sherlock Holmes",
+    "authors": ["Arthur Conan Doyle"],
+    "year": "1892",
+    "categories": ["Mystery", "Short stories"],
+    "description": "Dr. Watson records twelve cases that take Sherlock Holmes from London drawing rooms to the English countryside."
+  },
+  {
+    "id": 11,
+    "title": "Alice’s Adventures in Wonderland",
+    "authors": ["Lewis Carroll"],
+    "year": "1865",
+    "categories": ["Fantasy", "Children’s literature"],
+    "description": "Alice follows a white rabbit underground and meets a cast of creatures whose rules make sense only to themselves."
+  },
+  {
+    "id": 84,
+    "title": "Frankenstein",
+    "authors": ["Mary Shelley"],
+    "categories": ["Gothic fiction", "Science fiction"],
+    "description": "The scientist Victor Frankenstein brings a creature to life and faces the consequences of leaving him to fend for himself."
+  },
+  {
+    "id": 345,
+    "title": "Dracula",
+    "authors": ["Bram Stoker"],
+    "year": "1897",
+    "categories": ["Gothic fiction", "Horror"],
+    "description": "A group of friends assemble journals, letters, and records to track a mysterious count from Transylvania."
+  },
+  {
+    "id": 174,
+    "title": "The Picture of Dorian Gray",
+    "authors": ["Oscar Wilde"],
+    "categories": ["Gothic fiction", "Philosophical fiction"],
+    "description": "Dorian Gray stays young while his painted likeness bears the marks of the life he chooses to lead."
+  },
+  {
+    "id": 55,
+    "title": "The Wonderful Wizard of Oz",
+    "authors": ["L. Frank Baum"],
+    "year": "1900",
+    "categories": ["Fantasy", "Children’s literature"],
+    "description": "Dorothy and her new companions follow the yellow brick road, hoping the Wizard can help each of them."
+  },
+  {
+    "id": 514,
+    "title": "Little Women",
+    "authors": ["Louisa May Alcott"],
+    "categories": ["Coming of age", "Family"],
+    "description": "The four March sisters grow up in Civil War-era New England, with ambitions as different as their temperaments."
+  },
+  {
+    "id": 35,
+    "title": "The Time Machine",
+    "authors": ["H. G. Wells"],
+    "year": "1895",
+    "categories": ["Science fiction", "Adventure"],
+    "description": "A Victorian inventor travels into the distant future and wonders what became of the society he left behind."
+  },
+  {
+    "id": 120,
+    "title": "Treasure Island",
+    "authors": ["Robert Louis Stevenson"],
+    "year": "1883",
+    "categories": ["Adventure", "Pirates"],
+    "description": "Jim Hawkins ventures to sea with a treasure map and learns that Long John Silver has plans of his own."
+  },
+  {
+    "id": 1952,
+    "title": "The Yellow Wallpaper",
+    "authors": ["Charlotte Perkins Gilman"],
+    "year": "1892",
+    "categories": ["Gothic fiction", "Short stories"],
+    "description": "Confined to a room for a rest cure, a woman begins to see movement behind the pattern on its walls."
+  },
+  {
+    "id": 863,
+    "title": "The Mysterious Affair at Styles",
+    "authors": ["Agatha Christie"],
+    "categories": ["Mystery", "Detective fiction"],
+    "description": "Captain Hastings visits Styles Court, where a death introduces him to Hercule Poirot’s methods of investigation."
+  }
+]

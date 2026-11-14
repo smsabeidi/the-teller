@@ -1,6 +1,10 @@
 # The Teller
 
-The Teller is a native iPhone audiobook studio. Import a public story link, select an EPUB, PDF, DOCX, or TXT file in Files, or paste a story. The backend casts the script, and the app plays a free opening with a speaker-by-speaker transcript. Jump to a line or chapter, adjust playback speed, then pick up from Continue Listening in the Library. Three bundled samples play without a backend.
+The Teller is a native iPhone audiobook studio. Import a public story link, select an EPUB, PDF, DOCX, or TXT file, or paste a story. The app casts your text and plays it with a speaker-by-speaker transcript. In Discover, open Project Gutenberg classics for a Teller rendition or stream human-read recordings from LibriVox. Jump to a line or chapter, adjust playback speed, and pick up from Continue Listening in the Library. Three bundled samples play without a server.
+
+## Use it on your iPhone
+
+Follow the [personal deployment guide](DEPLOY.md) to create your private server key, connect your iPhone over HTTPS, and install the app with Xcode. Personal imports open the entire book and stay in your private library. Server voice providers are optional.
 
 ## Run on an iPhone simulator
 
@@ -10,10 +14,10 @@ Use Xcode 16 or newer with an installed iOS simulator, and Python 3.12 or newer.
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python -m uvicorn server:app --host 127.0.0.1 --port 8000
+TELLER_PERSONAL_MODE=0 python -m uvicorn server:app --host 127.0.0.1 --port 8000
 ```
 
-Open `ios/TheTeller.xcodeproj` and run the **TheTeller** scheme. For a physical iPhone, select a signing team, run the backend with `--host 0.0.0.0` on a trusted development network, and set the scheme's **Run → Arguments → Environment Variables** value `TELLER_API_BASE_URL` to your Mac's LAN address and port. When building a release, set the target's `TELLER_API_BASE_URL` build setting to your deployed HTTPS origin.
+Open `ios/TheTeller.xcodeproj` and run the **TheTeller** scheme. The Debug build uses port 8000 unless you saved a connection in the app. To try personal mode in Simulator, run the private server on port 8016 and enter `http://127.0.0.1:8016` with its key in **Settings**. The Debug build accepts loopback HTTP. Release connections use HTTPS.
 
 Without provider keys, the device reads the script with its installed voices. To use server audio, the backend supports the provider settings in `.env.example`. The guest MVP lets users continue to the full book for free when web billing is disabled. Keep that setting for local development.
 
@@ -25,6 +29,7 @@ With the backend running on port 8000, select an installed simulator and run:
 xcodebuild test -project ios/TheTeller.xcodeproj -scheme TheTeller \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
   -parallel-testing-enabled NO
+python -m unittest discover -s tests -v
 ```
 
-The [iOS PRD](PRD-iOS.md) covers the MVP and later releases. The backend also serves the web studio at [localhost](http://127.0.0.1:8000/). See [deployment notes](DEPLOY.md) for its server configuration.
+The [iOS PRD](PRD-iOS.md) covers the MVP and later releases. The [book API research](BOOK-API-RESEARCH.md) covers service capabilities, terms, and integration tradeoffs. Guest development mode also serves the [web studio](http://127.0.0.1:8000/).

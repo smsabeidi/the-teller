@@ -4,6 +4,7 @@ enum TellerAPIError: LocalizedError, Sendable {
     case invalidConfiguration
     case invalidResponse
     case guestSessionUnavailable
+    case personalServerRequired
     case missingStory
     case unsupportedFile
     case fileTooLarge
@@ -25,6 +26,8 @@ enum TellerAPIError: LocalizedError, Sendable {
             return "The Teller received an unexpected response. Try again."
         case .guestSessionUnavailable:
             return "The Teller couldn't start your guest session. Check your connection and try again."
+        case .personalServerRequired:
+            return "This address is not running The Teller in personal mode. Check your server settings."
         case .missingStory:
             return "Enter a link, choose a file, or paste your story."
         case .unsupportedFile:
@@ -41,12 +44,14 @@ enum TellerAPIError: LocalizedError, Sendable {
 
 actor TellerAPI {
     private let baseURL: URL
+    private let accessKey: String?
     private let session: URLSession
     private var bootstrap: Task<Void, Error>?
     private var didBootstrap = false
 
-    init(baseURL: URL) {
+    init(baseURL: URL, accessKey: String? = nil) {
         self.baseURL = baseURL
+        self.accessKey = accessKey
         let configuration = URLSessionConfiguration.default
         configuration.httpCookieStorage = .shared
         configuration.httpShouldSetCookies = true
@@ -55,7 +60,34 @@ actor TellerAPI {
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 120
         configuration.timeoutIntervalForResource = 300
-        self.session = URLSession(configuration: configuration)
+        self.session = URLSession(configuration: configuration, delegate: SameOriginRedirects(), delegateQueue: nil)
+    }
+
+    func checkConnection() async throws {
+        try await ensureGuestSession()
+    }
+
+    func catalog(query: String, page: Int = 0) async throws -> CatalogPage {
+        try await json(path: ["api", "catalog"], query: [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "page", value: String(page))
+        ])
+    }
+
+    func openCatalog(id: Int) async throws -> Book {
+        try await json(method: "POST", path: ["api", "catalog", String(id), "open"])
+    }
+
+    func humanCatalog(query: String, by: String = "title", offset: Int = 0) async throws -> HumanCatalogPage {
+        try await json(path: ["api", "catalog", "human"], query: [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "by", value: by),
+            URLQueryItem(name: "offset", value: String(offset))
+        ])
+    }
+
+    func humanBook(id: String) async throws -> HumanAudiobook {
+        try await json(path: ["api", "catalog", "human", id])
     }
 
     func importStory(
@@ -132,16 +164,20 @@ actor TellerAPI {
         let request = try request(method: "GET", path: ["api", "account"])
         guard let url = request.url else { throw TellerAPIError.invalidConfiguration }
         let cookieStorage = HTTPCookieStorage.shared
-        if didBootstrap && Self.hasGuestCookie(cookieStorage, for: url) {
+        if didBootstrap && (accessKey != nil || Self.hasGuestCookie(cookieStorage, for: url)) {
             try Task.checkCancellation()
             return
         }
 
         let session = session
+        let usingKey = accessKey != nil
         let bootstrap = Task {
             let (data, response) = try await session.data(for: request)
             _ = try Self.validate(data, response)
-            guard Self.hasGuestCookie(cookieStorage, for: url) else {
+            let account = try JSONDecoder().decode(ConnectionAccount.self, from: data)
+            if usingKey {
+                guard account.personalMode == true else { throw TellerAPIError.personalServerRequired }
+            } else if !Self.hasGuestCookie(cookieStorage, for: url) {
                 throw TellerAPIError.guestSessionUnavailable
             }
         }
@@ -187,6 +223,9 @@ actor TellerAPI {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let accessKey {
+            request.setValue("Bearer " + accessKey, forHTTPHeaderField: "Authorization")
+        }
         return request
     }
 
@@ -219,6 +258,27 @@ actor TellerAPI {
         }
         return http
     }
+}
+
+private final class SameOriginRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        guard let source = response.url, let destination = request.url,
+              source.scheme == destination.scheme, source.host == destination.host, source.port == destination.port,
+              destination.user == nil, destination.password == nil else {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
+    }
+}
+
+private struct ConnectionAccount: Decodable {
+    let personalMode: Bool?
+
+    enum CodingKeys: String, CodingKey { case personalMode = "personal_mode" }
 }
 
 private struct LibraryResponse: Decodable {
