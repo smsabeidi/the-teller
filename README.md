@@ -1,6 +1,6 @@
 # The Teller
 
-The Teller is a native iPhone audiobook studio. Import a public story link, select an EPUB, PDF, DOCX, or TXT file in Files, or paste a story. The backend casts the script, and the app plays a free opening with a speaker-by-speaker transcript. Open the Library to pick up where you left off. A bundled sample runs without a backend.
+The Teller is a native iPhone audiobook studio. Import a public story link, select an EPUB, PDF, DOCX, or TXT file in Files, or paste a story. The backend casts the script, and the app plays a free opening with a speaker-by-speaker transcript. Jump to a line or chapter, adjust playback speed, then pick up from Continue Listening in the Library. Three bundled samples play without a backend.
 
 ## Run on an iPhone simulator
 

@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 @MainActor
 struct TellerRootView: View {
@@ -58,15 +57,12 @@ struct TellerRootView: View {
     }
 
     private func open(_ book: Book) {
-        if player.book?.id != book.id {
-            player.open(book)
-        }
+        player.open(book)
         showingPlayer = true
         refreshLibrary()
     }
 
-    private func playSample() {
-        let sample = TellerSample.book
+    private func playSample(_ sample: Book) {
         if player.book?.id != sample.id {
             player.openSample(sample, lines: sample.lines, autoplay: true)
         } else if !player.isPlaying && !player.isLoading {
@@ -74,29 +70,4 @@ struct TellerRootView: View {
         }
         showingPlayer = true
     }
-}
-
-enum TellerSample {
-    static let book: Book = {
-        let lines = [
-            StoryLine(index: 0, speaker: "Narrator", text: "At the end of the pier, the lantern was burning for the first time in twelve years."),
-            StoryLine(index: 1, speaker: "Nora", text: "You saw who lit it?", emotion: "whisper"),
-            StoryLine(index: 2, speaker: "Elias", text: "No. But someone has been leaving my name in the keeper’s log.", emotion: "scared"),
-            StoryLine(index: 3, speaker: "Narrator", text: "Nora reached for the door. From the other side, someone turned the handle first.")
-        ]
-        return Book(
-            id: "teller-sample-lantern-keeper",
-            title: "The Lantern Keeper",
-            author: "The Teller",
-            cast: [
-                "Narrator": CastMember(voice: "narrator_f", gender: "female", lines: 2),
-                "Nora": CastMember(voice: "f1", gender: "female", lines: 1),
-                "Elias": CastMember(voice: "m1", gender: "male", lines: 1)
-            ],
-            totalLines: lines.count,
-            unlocked: true,
-            previewLines: lines.count,
-            lines: lines
-        )
-    }()
 }

@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 struct CreateStoryView: View {
     let api: TellerAPI
     let open: (Book) -> Void
-    let playSample: () -> Void
+    let playSample: (Book) -> Void
 
     @State private var mode: Mode = .link
     @State private var link = ""
@@ -210,18 +210,9 @@ struct CreateStoryView: View {
 
     private var textEntry: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Story text")
-                    .font(.subheadline.weight(.semibold))
-                    .accessibilityHidden(true)
-                Spacer()
-                if !story.isEmpty {
-                    Button("Discard") { discardDraft = true }
-                        .font(.subheadline)
-                        .foregroundStyle(TellerTheme.accent)
-                        .padding(.vertical, 8)
-                        .accessibilityIdentifier("discard-draft")
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack { pasteActions }
+                VStack(alignment: .leading) { pasteActions }
             }
             ZStack(alignment: .topLeading) {
                 if story.isEmpty {
@@ -241,6 +232,33 @@ struct CreateStoryView: View {
             }
             .padding(8)
             .background(TellerTheme.paper, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    private var pasteActions: some View {
+        Group {
+            Text("Story text")
+                .font(.subheadline.weight(.semibold))
+                .accessibilityHidden(true)
+            PasteButton(payloadType: String.self) { values in
+                guard let value = values.first else { return }
+                if story.isEmpty {
+                    story = value
+                } else {
+                    story += "\n\n" + value
+                }
+                clearMessage()
+            }
+            .buttonBorderShape(.capsule)
+            .tint(TellerTheme.accent)
+            .accessibilityIdentifier("paste-from-clipboard")
+            if !story.isEmpty {
+                Button("Discard") { discardDraft = true }
+                    .font(.subheadline)
+                    .foregroundStyle(TellerTheme.accent)
+                    .padding(.vertical, 8)
+                    .accessibilityIdentifier("discard-draft")
+            }
         }
     }
 
@@ -279,34 +297,38 @@ struct CreateStoryView: View {
                 .font(.system(.title2, design: .serif, weight: .semibold))
                 .accessibilityAddTraits(.isHeader)
 
-            Button(action: playSample) {
-                HStack(spacing: 14) {
-                    Image(systemName: "light.beacon.max")
-                        .font(.title2)
-                        .foregroundStyle(TellerTheme.accent)
-                        .frame(width: 56, height: 56)
-                        .background(TellerTheme.softAccent, in: RoundedRectangle(cornerRadius: 12))
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(TellerSample.book.title)
-                            .font(.system(.headline, design: .serif))
-                        Text("Original sample · 3 voices")
-                            .font(.footnote)
-                            .foregroundStyle(TellerTheme.muted)
+            ForEach(TellerSample.all, id: \.book.id) { entry in
+                Button {
+                    playSample(entry.book)
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: entry.symbol)
+                            .font(.title2)
+                            .foregroundStyle(TellerTheme.accent)
+                            .frame(width: 56, height: 56)
+                            .background(TellerTheme.softAccent, in: RoundedRectangle(cornerRadius: 12))
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(entry.book.title)
+                                .font(.system(.headline, design: .serif))
+                            Text("\(entry.genre) · \(entry.book.cast.count) voices")
+                                .font(.footnote)
+                                .foregroundStyle(TellerTheme.muted)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "play.circle")
+                            .font(.title2)
+                            .foregroundStyle(TellerTheme.accent)
+                            .accessibilityHidden(true)
                     }
-                    Spacer(minLength: 0)
-                    Image(systemName: "play.circle")
-                        .font(.title2)
-                        .foregroundStyle(TellerTheme.accent)
-                        .accessibilityHidden(true)
+                    .padding(14)
+                    .tellerCard()
+                    .contentShape(Rectangle())
                 }
-                .padding(14)
-                .tellerCard()
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .accessibilityIdentifier(entry.book.id == TellerSample.all.first?.book.id ? "play-sample" : entry.book.id)
+                .accessibilityLabel("Play sample, " + entry.book.title)
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("play-sample")
-            .accessibilityLabel("Play sample, The Lantern Keeper")
         }
     }
 
@@ -349,9 +371,11 @@ struct CreateStoryView: View {
                 guard !Task.isCancelled, attempt == id else { return }
                 importTask = nil
                 attempt = nil
-                selectedFile = nil
-                story = ""
-                link = ""
+                switch source {
+                case .link: link = ""
+                case .file: selectedFile = nil
+                case .text: story = ""
+                }
                 open(book)
             } catch {
                 guard attempt == id else { return }

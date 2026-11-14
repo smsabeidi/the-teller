@@ -16,6 +16,10 @@ final class TellerFlowTests: XCTestCase {
         waitFor(app.buttons["player-close"])
         XCTAssertTrue(app.buttons["player-play-toggle"].exists)
         XCTAssertTrue(app.buttons["transcript-line-0"].exists)
+        let speed = waitFor(app.buttons["player-speed"])
+        speed.tap()
+        waitFor(app.buttons["1.5×"]).tap()
+        XCTAssertEqual(speed.value as? String, "1.5×")
         app.buttons["player-close"].tap()
         XCTAssertTrue(app.buttons["mini-play-toggle"].exists)
     }
@@ -26,8 +30,10 @@ final class TellerFlowTests: XCTestCase {
         let title = "Rain on the platform " + UUID().uuidString.prefix(6)
         let story = [
             title,
+            "Chapter One",
             "Ada watched the lights across the tracks.",
             "\"The train is early,\" Ada said.",
+            "Chapter Two",
             "\"Then we have time,\" Noah replied.",
             "The platform clock began to ring."
         ].joined(separator: "\n")
@@ -49,16 +55,23 @@ final class TellerFlowTests: XCTestCase {
         let playerClosed = NSPredicate(format: "exists == false")
         expectation(for: playerClosed, evaluatedWith: unlock)
         waitForExpectations(timeout: 15)
+        let transport = app.buttons["player-play-toggle"]
+        if transport.label == "Pause" { transport.tap() }
+        waitFor(app.buttons["player-chapters"]).tap()
+        waitFor(app.buttons["player-chapter-5"]).tap()
+        let savedPosition = waitFor(app.buttons["player-position"]).label
+        XCTAssertEqual(savedPosition, "Line 6 of 9")
         app.buttons["player-close"].tap()
 
         app.terminate()
         app.launch()
         waitFor(app.tabBars.buttons["Library"]).tap()
-        let row = waitFor(app.buttons.containing(.staticText, identifier: String(title)).firstMatch, timeout: 20)
+        let row = waitFor(app.buttons["library-continue"], timeout: 20)
         row.tap()
         waitFor(app.buttons["player-close"])
         XCTAssertEqual(app.staticTexts["player-title"].label, String(title))
         XCTAssertFalse(app.buttons["continue-book"].exists)
+        XCTAssertEqual(waitFor(app.buttons["player-position"]).label, savedPosition)
     }
 
     @discardableResult

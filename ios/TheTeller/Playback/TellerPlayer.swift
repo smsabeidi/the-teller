@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import MediaPlayer
 import Observation
+import UIKit
 
 @MainActor
 @Observable
@@ -18,7 +19,7 @@ final class TellerPlayer {
     private(set) var errorMessage: String?
 
     var availableLines: Int { book?.availableLines ?? 0 }
-    var currentLine: StoryLine? { visibleLines.first { $0.index == lineIndex } }
+    var currentLine: StoryLine? { activeLine ?? visibleLines.first { $0.index == lineIndex } }
     var playedFraction: Double {
         guard availableLines > 0 else { return 0 }
         return min(1, (Double(lineIndex) + lineFraction) / Double(availableLines))
@@ -28,10 +29,22 @@ final class TellerPlayer {
     var hasLaterTranscript: Bool { (visibleLines.last?.index ?? -1) < availableLines - 1 }
     var isSample: Bool { localLines != nil }
 
+    struct SavedProgress {
+        let lineIndex: Int
+        let fraction: Double?
+        let updatedAt: Date?
+        let isFinished: Bool
+        let isPreviewFinished: Bool
+    }
+
     private struct Position: Codable {
         let line: Int
         let fraction: Double
         let finished: Bool
+        let available: Int?
+        let total: Int?
+        let previewFinished: Bool?
+        let updatedAt: Date?
     }
 
     private struct Prefetch {
@@ -47,6 +60,7 @@ final class TellerPlayer {
     @ObservationIgnored private let delegate = PlaybackDelegate()
     @ObservationIgnored private var synthesizer = AVSpeechSynthesizer()
     @ObservationIgnored private var audioPlayer: AVAudioPlayer?
+    private var activeLine: StoryLine?
     @ObservationIgnored private var utterance: AVSpeechUtterance?
     @ObservationIgnored private var utteranceOffset = 0
     @ObservationIgnored private var loadTask: Task<Void, Never>?
@@ -55,9 +69,12 @@ final class TellerPlayer {
     @ObservationIgnored private var prefetch: Prefetch?
     @ObservationIgnored private var clipRevision = 0
     @ObservationIgnored private var transcriptRevision = 0
+    @ObservationIgnored private var prefersLocalSpeech = false
     @ObservationIgnored private var sessionActive = false
+    @ObservationIgnored private var interruptionActive = false
     @ObservationIgnored private var resumeAfterInterruption = false
-    @ObservationIgnored private var lastCheckpoint = Date.distantPast
+    @ObservationIgnored private var lastCheckpoint = ContinuousClock.now
+    private var progressRevision = 0
     @ObservationIgnored private var voiceChoices: [String: VoiceChoice] = [:]
     private var localLines: [StoryLine]?
 
@@ -74,7 +91,8 @@ final class TellerPlayer {
     }
 
     func open(_ book: Book, autoplay: Bool = false) {
-        if self.book?.id == book.id, !isSample {
+        if let current = self.book, current.id == book.id, !isSample {
+            if current != book { reload(book) }
             if autoplay { play() }
             return
         }
@@ -92,6 +110,7 @@ final class TellerPlayer {
     func reload(_ updatedBook: Book) {
         guard let book, book.id == updatedBook.id, !isSample else { return }
         let wasPlaying = isPlaying
+        updateClipFraction()
         let continueAtNewLine = isFinished && !book.unlocked && updatedBook.availableLines > availableLines
         let nextIndex = continueAtNewLine ? lineIndex + 1 : lineIndex
         let fraction = continueAtNewLine ? 0 : lineFraction
@@ -99,21 +118,20 @@ final class TellerPlayer {
         resetClip()
         resetTranscript()
         self.book = updatedBook
+        prefersLocalSpeech = updatedBook.provider == "browser"
         self.voiceChoices = buildVoiceChoices(for: updatedBook)
         visibleLines = updatedBook.lines
         lineIndex = boundedIndex(nextIndex)
-        lineFraction = fraction
-        isFinished = remainsFinished
+        isFinished = remainsFinished && lineIndex == nextIndex && lineIndex == availableLines - 1
+        lineFraction = lineIndex == nextIndex ? (isFinished ? 1 : min(0.999, fraction)) : 0
         errorMessage = nil
-        loadLines(around: lineIndex)
         checkpoint()
-        if wasPlaying { play() }
+        if wasPlaying { play() } else { loadLines(around: lineIndex) }
         updateNowPlaying()
     }
 
     func close() {
         pause()
-        checkpoint()
         resetClip()
         resetTranscript()
         events.removeRemoteCommands()
@@ -121,6 +139,7 @@ final class TellerPlayer {
         localLines = nil
         visibleLines = []
         voiceChoices = [:]
+        prefersLocalSpeech = false
         lineIndex = 0
         lineFraction = 0
         isFinished = false
@@ -132,26 +151,40 @@ final class TellerPlayer {
 
     func play() {
         guard let book, availableLines > 0, !isPlaying else { return }
-        resumeAfterInterruption = false
         if hasReachedPreviewEnd { return }
+        if interruptionActive {
+            resumeAfterInterruption = true
+            return
+        }
+        resumeAfterInterruption = false
         if isFinished { select(0, fraction: 0, continuePlaying: false) }
         errorMessage = nil
         isPlaying = true
         if let player = audioPlayer {
             do {
                 try activateSession()
-                guard player.play() else { throw PlayerFailure.audioUnavailable }
-                startClock()
-                prefetchNextLine()
+                if player.play() {
+                    startClock()
+                    prefetchNextLine()
+                } else {
+                    player.delegate = nil
+                    audioPlayer = nil
+                    startClip(for: book)
+                }
             } catch {
                 fail(error)
             }
         } else if utterance != nil, synthesizer.isPaused {
             do {
                 try activateSession()
-                if !synthesizer.continueSpeaking() { startClip(for: book) }
-                startClock()
-                prefetchNextLine()
+                if synthesizer.continueSpeaking() {
+                    startClock()
+                    prefetchNextLine()
+                } else {
+                    utterance = nil
+                    synthesizer.stopSpeaking(at: .immediate)
+                    startClip(for: book)
+                }
             } catch {
                 fail(error)
             }
@@ -193,20 +226,42 @@ final class TellerPlayer {
     func checkpoint() {
         guard let book else { return }
         updateClipFraction()
-        let position = Position(line: lineIndex, fraction: lineFraction, finished: isFinished)
-        if let data = try? JSONEncoder().encode(position) {
+        lastCheckpoint = .now
+        let previous = restorePosition(book.id)
+        guard previous != nil || lineIndex > 0 || lineFraction > 0 || isFinished else { return }
+        let positionChanged = previous?.line != lineIndex || previous?.fraction != lineFraction || previous?.finished != isFinished
+        let metadataChanged = previous?.available != availableLines || previous?.total != book.totalLines
+            || previous?.previewFinished != hasReachedPreviewEnd
+        guard positionChanged || metadataChanged else { return }
+        let new = Position(line: lineIndex, fraction: lineFraction, finished: isFinished,
+                           available: availableLines, total: book.totalLines, previewFinished: hasReachedPreviewEnd,
+                           updatedAt: positionChanged ? Date() : previous?.updatedAt)
+        if let data = try? JSONEncoder().encode(new) {
             defaults.set(data, forKey: positionKey(book.id))
-            lastCheckpoint = Date()
+            progressRevision += 1
         }
     }
 
     func resumeIndex(for bookID: String) -> Int {
-        restorePosition(bookID)?.line ?? 0
+        savedProgress(for: bookID)?.lineIndex ?? 0
+    }
+
+    func savedProgress(for bookID: String) -> SavedProgress? {
+        // Subscribe views to local updates even as they display a different book.
+        _ = progressRevision
+        guard let position = restorePosition(bookID) else { return nil }
+        let fraction = position.total.flatMap { total in
+            total > 0 ? min(1, max(0, (Double(position.line) + position.fraction) / Double(total))) : nil
+        }
+        let previewFinished = position.previewFinished ?? (position.finished && position.total != position.available)
+        return SavedProgress(lineIndex: position.line, fraction: fraction, updatedAt: position.updatedAt,
+                             isFinished: position.finished && !previewFinished, isPreviewFinished: previewFinished)
     }
 
     func removeProgress(for bookID: String) {
         if book?.id == bookID { close() }
         defaults.removeObject(forKey: positionKey(bookID))
+        progressRevision += 1
     }
 
     func loadLines(around index: Int) {
@@ -231,16 +286,18 @@ final class TellerPlayer {
         close()
         self.book = book
         localLines = local
+        prefersLocalSpeech = local != nil || book.provider == "browser"
         visibleLines = (local ?? book.lines).sorted { $0.index < $1.index }
         voiceChoices = buildVoiceChoices(for: book)
         if let previous = restorePosition(book.id), availableLines > 0 {
-            lineIndex = boundedIndex(previous.line)
-            lineFraction = lineIndex == previous.line ? min(1, max(0, previous.fraction)) : 0
-            isFinished = previous.finished && lineIndex == availableLines - 1
+            let canContinue = previous.finished && book.unlocked && previous.line < availableLines - 1
+            let resumeLine = canContinue ? previous.line + 1 : previous.line
+            lineIndex = boundedIndex(resumeLine)
+            isFinished = previous.finished && !canContinue && lineIndex == resumeLine && lineIndex == availableLines - 1
+            lineFraction = isFinished ? 1 : lineIndex == previous.line ? min(0.999, max(0, previous.fraction)) : 0
         }
         registerRemoteCommands()
-        loadLines(around: lineIndex)
-        if autoplay { play() }
+        if autoplay && !hasReachedPreviewEnd { play() } else { loadLines(around: lineIndex) }
     }
 
     private func positionKey(_ id: String) -> String { "\(storagePrefix).position.\(id)" }
@@ -279,6 +336,7 @@ final class TellerPlayer {
         audioPlayer?.delegate = nil
         audioPlayer?.stop()
         audioPlayer = nil
+        activeLine = nil
         utterance = nil
         synthesizer.stopSpeaking(at: .immediate)
         isLoading = false
@@ -302,16 +360,16 @@ final class TellerPlayer {
         ticking = nil
         updateClipFraction()
         audioPlayer?.pause()
-        if utterance != nil, synthesizer.isSpeaking {
+        if utterance != nil, synthesizer.isSpeaking, !synthesizer.isPaused {
             if !synthesizer.pauseSpeaking(at: .immediate) {
                 utterance = nil
                 synthesizer.stopSpeaking(at: .immediate)
             }
         }
-        if deactivate { deactivateSession() }
         isPlaying = false
         isLoading = false
         checkpoint()
+        if deactivate { deactivateSession() }
         updateNowPlaying()
     }
 
@@ -355,6 +413,7 @@ final class TellerPlayer {
         let revision = clipRevision
         let existingLine = currentLine
         let local = localLines != nil
+        let useSpeech = prefersLocalSpeech
         let cached = prefetch?.line == index ? prefetch?.task : nil
         isLoading = true
         updateNowPlaying()
@@ -371,7 +430,7 @@ final class TellerPlayer {
                     throw PlayerFailure.lineUnavailable
                 }
                 let clip: LineAudio
-                if local {
+                if useSpeech {
                     clip = .speechFallback
                 } else if let cached {
                     do {
@@ -386,6 +445,7 @@ final class TellerPlayer {
                 guard let self, !Task.isCancelled, clipRevision == revision else { return }
                 if !loaded.isEmpty { mergeTranscript(loaded) }
                 if prefetch?.line == index { prefetch = nil }
+                loadTask = nil
                 try begin(clip, line: line)
             } catch {
                 guard let self, !Task.isCancelled, clipRevision == revision else { return }
@@ -396,6 +456,7 @@ final class TellerPlayer {
 
     private func begin(_ clip: LineAudio, line: StoryLine) throws {
         try activateSession()
+        activeLine = line
         switch clip {
         case .mp3(let data):
             let player = try AVAudioPlayer(data: data, fileTypeHint: AVFileType.mp3.rawValue)
@@ -403,10 +464,11 @@ final class TellerPlayer {
             player.enableRate = true
             guard player.prepareToPlay() else { throw PlayerFailure.audioUnavailable }
             player.rate = Float(rate)
-            player.currentTime = lineFraction * player.duration
+            player.currentTime = min(0.999, lineFraction) * player.duration
             audioPlayer = player
             guard player.play() else { throw PlayerFailure.audioUnavailable }
         case .speechFallback:
+            prefersLocalSpeech = true
             speak(line)
         }
         isLoading = false
@@ -416,7 +478,7 @@ final class TellerPlayer {
     }
 
     private func prefetchNextLine() {
-        guard let book, localLines == nil, !["browser", "speech"].contains(book.provider),
+        guard let book, !prefersLocalSpeech, !interruptionActive,
               lineIndex + 1 < availableLines, prefetch?.line != lineIndex + 1 else { return }
         prefetch?.task.cancel()
         let next = lineIndex + 1
@@ -432,7 +494,7 @@ final class TellerPlayer {
                 try? await Task.sleep(for: .milliseconds(300))
                 guard let self, !Task.isCancelled, isPlaying else { return }
                 updateClipFraction()
-                if Date().timeIntervalSince(lastCheckpoint) >= 5 { checkpoint() }
+                if lastCheckpoint.duration(to: .now) >= .seconds(5) { checkpoint() }
             }
         }
     }
@@ -468,7 +530,7 @@ final class TellerPlayer {
     private func speechAdvanced(id: ObjectIdentifier, offset: Int) {
         guard isPlaying, let utterance, ObjectIdentifier(utterance) == id,
               let line = currentLine, !line.text.isEmpty else { return }
-        lineFraction = min(0.999, Double(utteranceOffset + offset) / Double(line.text.utf16.count))
+        lineFraction = max(lineFraction, min(0.999, Double(utteranceOffset + offset) / Double(line.text.utf16.count)))
         updateNowPlaying()
     }
 
@@ -539,10 +601,14 @@ final class TellerPlayer {
         guard let rawType, let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
         switch type {
         case .began:
+            guard !interruptionActive else { return }
+            interruptionActive = true
             resumeAfterInterruption = isPlaying
             sessionActive = false
             suspendPlayback(deactivate: false)
         case .ended:
+            guard interruptionActive else { return }
+            interruptionActive = false
             let resumptionAllowed = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
             if resumeAfterInterruption && resumptionAllowed { play() }
             resumeAfterInterruption = false
@@ -555,6 +621,7 @@ final class TellerPlayer {
         checkpoint()
         resetClip()
         sessionActive = false
+        interruptionActive = false
         resumeAfterInterruption = false
         synthesizer = AVSpeechSynthesizer()
         configureSynthesizer()
