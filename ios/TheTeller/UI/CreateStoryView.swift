@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 @MainActor
 struct CreateStoryView: View {
     let api: TellerAPI
+    let personalMode: Bool
     let open: (Book) -> Void
     let playSample: (Book) -> Void
 
@@ -121,7 +122,7 @@ struct CreateStoryView: View {
             Button {
                 createPreview()
             } label: {
-                Label("Create free preview", systemImage: "arrow.right")
+                Label(personalMode ? "Create audiobook" : "Create free preview", systemImage: "arrow.right")
             }
             .buttonStyle(TellerPrimaryButtonStyle())
             .accessibilityIdentifier("create-preview")
@@ -285,7 +286,7 @@ struct CreateStoryView: View {
                 .foregroundStyle(TellerTheme.accent)
                 .accessibilityIdentifier("import-status")
         } else {
-            Text("No account required. Your story is sent to The Teller to prepare the audiobook.")
+            Text(personalMode ? "Your edition is saved to your private library." : "No account required. Your story is sent to The Teller to prepare the audiobook.")
                 .font(.footnote)
                 .foregroundStyle(TellerTheme.muted)
         }
@@ -351,7 +352,7 @@ struct CreateStoryView: View {
         if progress < 1 {
             return mode == .file ? "Uploading file… \(Int(progress * 100))%" : "Submitting story…"
         }
-        return "Preparing your preview…"
+        return personalMode ? "Preparing your audiobook…" : "Preparing your preview…"
     }
 
     private func createPreview() {

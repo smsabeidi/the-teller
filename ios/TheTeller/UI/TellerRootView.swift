@@ -26,7 +26,7 @@ struct TellerRootView: View {
     var body: some View {
         TabView(selection: $tab) {
             NavigationStack {
-                CreateStoryView(api: api, open: open, playSample: playSample)
+                CreateStoryView(api: api, personalMode: connection.accessKey != nil, open: open, playSample: playSample)
                     .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
                     .toolbar(.hidden, for: .navigationBar)
             }

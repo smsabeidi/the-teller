@@ -45,7 +45,7 @@ struct Book: Codable, Sendable, Identifiable, Equatable {
     let title: String
     let author: String
     let cover: String
-    let sourceURL: URL?
+    let sourceURL: String?
     let words: Int
     let cast: [String: CastMember]
     let totalLines: Int
@@ -64,7 +64,7 @@ struct Book: Codable, Sendable, Identifiable, Equatable {
         title: String,
         author: String = "",
         cover: String = "",
-        sourceURL: URL? = nil,
+        sourceURL: String? = nil,
         words: Int = 0,
         cast: [String: CastMember] = [:],
         totalLines: Int,
