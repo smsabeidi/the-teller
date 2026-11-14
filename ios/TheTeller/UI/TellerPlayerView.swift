@@ -163,6 +163,11 @@ struct TellerPlayerView: View {
                     .font(.subheadline)
                     .foregroundStyle(TellerTheme.muted)
             }
+            if let source = book.sourceURL, source.scheme == "https", source.host == "www.gutenberg.org" {
+                Link("Project Gutenberg edition", destination: source)
+                    .font(.footnote)
+                    .foregroundStyle(TellerTheme.accent)
+            }
             if let chapter = currentChapter(in: book), availableChapters(for: book).count > 1 {
                 Button {
                     showingChapters = true

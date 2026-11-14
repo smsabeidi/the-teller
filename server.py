@@ -34,8 +34,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.datastructures import Headers
 
-from account import attach_book, browser_owner, require_book, same_origin, set_book_remover
+from account import attach_book, browser_owner, owned_catalog_book, personal_mode, require_book, same_origin, set_book_remover
 from account import router as account_router
+from book_catalog import load_catalog_book, search_catalog
+from human_audio import router as human_audio_router
 from story_import import MAX_UPLOAD_BYTES, extract_file, fetch_url
 
 load_dotenv()
@@ -45,6 +47,7 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 PREVIEW_LINES = max(1, int(os.getenv("PREVIEW_LINES", "12")) or 12)
 MAX_CHARS = int(os.getenv("MAX_CHARS", "1000000"))
+MAX_CATALOG_CHARS = int(os.getenv("MAX_CATALOG_CHARS", "4000000"))
 
 BASE = Path(__file__).parent
 DATA = Path(os.getenv("VOICEEMO_DATA_DIR") or BASE / "data")
@@ -373,8 +376,12 @@ async def tts(book_id: str, text: str, voice_slot: str, emotion: str) -> bytes:
 # ----------------------------------------------------------------------------
 app = FastAPI(title="VoiceEmo Studio")
 app.include_router(account_router)
+app.include_router(human_audio_router)
 
 SITE_PASSWORD = os.getenv("SITE_PASSWORD", "").strip()
+ACCESS_KEY = os.getenv("TELLER_ACCESS_KEY", "").strip()
+if personal_mode() and not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", ACCESS_KEY):
+    raise RuntimeError("Personal mode requires TELLER_ACCESS_KEY (32–128 URL-safe characters).")
 MAX_EXPORT_CHARS = int(os.getenv("MAX_EXPORT_CHARS", str(MAX_CHARS)))
 IMPORTS_PER_HOUR = int(os.getenv("IMPORTS_PER_HOUR", "20"))
 _hits: dict[str, list[float]] = {}
@@ -427,7 +434,14 @@ app.add_middleware(ImportBodyLimit)
 @app.middleware("http")
 async def guard(request, call_next):
     import base64
-    if SITE_PASSWORD and request.url.path not in ("/api/health", "/api/stripe/webhook"):
+    if personal_mode() and request.url.path != "/api/health":
+        auth = request.headers.get("authorization", "")
+        kind, _, candidate = auth.partition(" ")
+        if kind.lower() != "bearer" or not hmac.compare_digest(candidate.encode(), ACCESS_KEY.encode()):
+            return JSONResponse({"detail": "Enter your personal server key in Settings."}, status_code=401,
+                                headers={"Cache-Control": "no-store", "WWW-Authenticate": "Bearer"})
+        request.state.teller_personal = True
+    elif SITE_PASSWORD and request.url.path not in ("/api/health", "/api/stripe/webhook"):
         auth = request.headers.get("authorization", "")
         ok = False
         if auth.startswith("Basic "):
@@ -439,12 +453,14 @@ async def guard(request, call_next):
         if not ok:
             return Response("Password required", status_code=401,
                             headers={"WWW-Authenticate": 'Basic realm="VoiceEmo"'})
-    if request.method == "POST" and request.url.path in ("/api/import", "/api/library/open"):
+    if request.method == "POST" and (
+        request.url.path in ("/api/import", "/api/library/open") or request.url.path.startswith("/api/catalog/")
+    ):
         ip = request.client.host if request.client else "unknown"
         if not rate_ok(ip, IMPORTS_PER_HOUR):
             return JSONResponse({"detail": "Too many stories this hour. Try again later."}, status_code=429)
     response = await call_next(request)
-    if request.url.path.startswith(("/api/books/", "/api/my/", "/api/account", "/api/auth/", "/api/import")):
+    if request.url.path.startswith(("/api/books/", "/api/my/", "/api/account", "/api/auth/", "/api/import", "/api/catalog/")):
         response.headers["Cache-Control"] = "private, no-store"
     return response
 
@@ -495,12 +511,18 @@ async def import_story(
     lines = split_long_lines(lines)
     if not lines:
         raise HTTPException(400, "No readable story text was found.")
+    unlocked = bool(getattr(request.state, "teller_personal", False))
     book = {"id": str(uuid.uuid4()), "title": title, "lines": lines,
-            "cast": assign_voices(lines, body, genders), "words": len(body.split()), "author": author}
+            "cast": assign_voices(lines, body, genders), "words": len(body.split()), "author": author,
+            "private": unlocked}
     owner = browser_owner(request, response)
-    attach_book(book["id"], owner, title, author)
     save_book(book)
-    return summary(book, unlocked=False)
+    try:
+        attach_book(book["id"], owner, title, author, unlocked=unlocked)
+    except Exception:
+        remove_book(book["id"])
+        raise
+    return summary(book, unlocked=unlocked)
 
 
 def split_long_lines(lines: list[dict]) -> list[dict]:
@@ -525,6 +547,7 @@ def summary(book: dict, unlocked: bool = True) -> dict:
     limit = total if unlocked else min(PREVIEW_LINES, total)
     return {"id": book["id"], "title": book["title"], "words": book["words"],
             "author": book.get("author", ""), "cover": book.get("cover", ""),
+            "source_url": book.get("source_url"),
             "ai_cast": book.get("ai_cast", False), "ai_available": bool(OPENAI_API_KEY),
             "cast": book["cast"], "total_lines": total, "unlocked": unlocked,
             "preview_lines": limit,
@@ -535,8 +558,8 @@ def summary(book: dict, unlocked: bool = True) -> dict:
 
 
 def authorized_book(request: Request, book_id: str, full: bool = False) -> tuple[dict, bool]:
-    access = require_book(request, book_id)
     book = load_book(book_id)
+    access = require_book(request, book_id, allow_public=not book.get("private"))
     unlocked = access is None or bool(access["unlocked"])
     if full and not unlocked:
         raise HTTPException(403, "Unlock the full audiobook to continue.")
@@ -710,134 +733,63 @@ def export_download(request: Request, book_id: str):
 
 
 # ----------------------------------------------------------------------------
-# Library: Google Books for the catalog, Project Gutenberg for full text
-# ----------------------------------------------------------------------------
-GOOGLE_BOOKS_API_KEY = os.getenv("GOOGLE_BOOKS_API_KEY", "").strip()
-GB_URL = "https://www.googleapis.com/books/v1/volumes"
-GUTENDEX = "https://gutendex.com/books"
-_gutenberg_match: dict[str, int | None] = {}
+# Classics use the exact Project Gutenberg edition ID, and each reader has a private copy.
+class OpenBook(BaseModel):
+    id: int
 
 
-def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9 ]", "", s.lower()).strip()
-
-
-def gb_item(v: dict) -> dict:
-    info = v.get("volumeInfo", {})
-    access = v.get("accessInfo", {})
-    img = (info.get("imageLinks") or {})
-    cover = (img.get("thumbnail") or img.get("smallThumbnail") or "").replace("http://", "https://")
-    return {
-        "id": v.get("id"),
-        "title": info.get("title", "Untitled"),
-        "authors": info.get("authors", []),
-        "year": (info.get("publishedDate") or "")[:4],
-        "description": re.sub(r"<[^>]+>", "", info.get("description", ""))[:400],
-        "cover": cover,
-        "categories": info.get("categories", []),
-        "public_domain": access.get("publicDomain", False),
-        "google_link": info.get("infoLink", ""),
-    }
-
-
+@app.get("/api/catalog")
 @app.get("/api/library/search")
 async def library_search(q: str = "", page: int = 0):
-    """Search Google Books. Free-ebook filter keeps results to books we can usually perform."""
-    query = q.strip() or "subject:fiction classics"
-    params = {"q": query, "filter": "free-ebooks", "printType": "books",
-              "maxResults": 24, "startIndex": max(0, page) * 24, "orderBy": "relevance"}
-    if GOOGLE_BOOKS_API_KEY:
-        params["key"] = GOOGLE_BOOKS_API_KEY
-    try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(GB_URL, params=params)
-    except httpx.RequestError as exc:
-        raise HTTPException(502, "The classics catalog is unavailable. Try again later.") from exc
-    if r.status_code != 200:
-        raise HTTPException(502, "The classics catalog is unavailable. Try again later.")
-    items, seen = [], set()
-    for v in r.json().get("items", []):
-        b = gb_item(v)
-        key = (_norm(b["title"]), _norm(" ".join(b["authors"][:1])))
-        if key in seen:
-            continue
-        seen.add(key)
-        items.append(b)
-    return {"query": query, "items": items}
+    if len(q) > 120:
+        raise HTTPException(400, "Search using up to 120 characters.")
+    items, next_page = await search_catalog(q.strip(), page=max(0, page))
+    return {"query": q.strip(), "items": items, "next_page": next_page}
 
 
-async def find_gutenberg(title: str, author: str) -> int | None:
-    k = f"{_norm(title)}|{_norm(author)}"
-    if k in _gutenberg_match:
-        return _gutenberg_match[k]
-    surname = author.split()[-1] if author else ""
-    short_title = re.split(r"[:;(]", title)[0].strip()
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
-        r = await c.get(GUTENDEX, params={"search": f"{short_title} {surname}".strip()})
-    best = None
-    if r.status_code == 200:
-        nt = _norm(short_title)
-        for b in r.json().get("results", []):
-            has_text = any(f.startswith("text/plain") for f in b.get("formats", {}))
-            names = " ".join(a.get("name", "") for a in b.get("authors", [])).lower()
-            if has_text and nt and nt in _norm(b.get("title", "")) and (not surname or surname.lower() in names):
-                best = b["id"]
-                break
-    _gutenberg_match[k] = best
-    return best
-
-
-def strip_gutenberg(text: str) -> str:
-    s = re.search(r"\*\*\*\s*START OF (THE|THIS) PROJECT GUTENBERG.*?\*\*\*", text, re.I)
-    e = re.search(r"\*\*\*\s*END OF (THE|THIS) PROJECT GUTENBERG", text, re.I)
-    body = text[s.end() if s else 0: e.start() if e else len(text)]
-    # Gutenberg hard-wraps lines; re-join paragraphs so dialogue stays together
-    paras = [re.sub(r"\s*\n\s*", " ", p).strip() for p in re.split(r"\n\s*\n", body)]
-    return "\n".join(p for p in paras if p)
-
-
-class OpenBook(BaseModel):
-    google_id: str
+@app.get("/api/library/featured")
+async def library_featured():
+    items, _ = await search_catalog("")
+    return {"items": items}
 
 
 @app.post("/api/library/open")
-async def library_open(request: Request, body: OpenBook):
-    """Turn a Google Books volume into a cast, playable audiobook."""
+async def library_open(request: Request, response: Response, body: OpenBook):
+    return await open_catalog_book(request, response, body.id)
+
+
+@app.post("/api/catalog/{book_id}/open")
+async def open_catalog_book(request: Request, response: Response, book_id: int):
     same_origin(request)
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", body.google_id):
-        raise HTTPException(400, "Invalid catalog book.")
-    async with httpx.AsyncClient(timeout=15) as c:
-        params = {"key": GOOGLE_BOOKS_API_KEY} if GOOGLE_BOOKS_API_KEY else {}
-        r = await c.get(f"{GB_URL}/{body.google_id}", params=params)
-    if r.status_code != 200:
-        raise HTTPException(404, "Book not found on Google Books")
-    meta = gb_item(r.json())
+    owner = browser_owner(request, response)
+    source = f"gutenberg:{book_id}"
+    current = owned_catalog_book(owner, source)
+    if current:
+        return summary(load_book(current))
 
-    cached = BOOKS / f"gb_{re.sub(r'[^A-Za-z0-9_-]', '', body.google_id)}.json"
-    if cached.exists():
-        return summary(load_book(json.loads(cached.read_text())["book_id"]))
-
-    gid = await find_gutenberg(meta["title"], (meta["authors"] or [""])[0])
-    if not gid:
-        raise HTTPException(404, "We couldn't find a free full text for this book. "
-                                 "Only public-domain books can be performed.")
-    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
-        info = (await c.get(f"{GUTENDEX}/{gid}")).json()
-        url = next(u for f, u in info["formats"].items() if f.startswith("text/plain"))
-        text = (await c.get(url)).text
-    body_text = strip_gutenberg(text)[:MAX_CHARS]
-    if len(body_text) < 200:
-        raise HTTPException(502, "The book text came back empty. Try again.")
-
-    lines, genders = await asyncio.to_thread(cast_classic, body_text)
+    meta, story = await load_catalog_book(book_id)
+    if len(story) > MAX_CATALOG_CHARS:
+        raise HTTPException(413, "This edition exceeds the classics length limit. Select a shorter book.")
+    lines, genders = await asyncio.to_thread(cast_classic, story)
     lines = split_long_lines(lines)
-    book = {"id": str(uuid.uuid4()), "title": meta["title"], "lines": lines,
-            "cast": assign_voices(lines, body_text, genders), "words": len(body_text.split()),
-            "author": ", ".join(meta["authors"]), "cover": meta["cover"], "source": f"gutenberg:{gid}"}
+    if not lines:
+        raise HTTPException(422, "This edition has no readable text.")
+    new_id = str(uuid.uuid4())
+    book = {"id": new_id, "title": meta["title"], "lines": lines,
+            "cast": assign_voices(lines, story, genders), "words": len(story.split()),
+            "author": ", ".join(meta["authors"]), "cover": meta.get("cover") or "",
+            "source": source, "source_url": meta["source"], "private": True}
+    # A reader cannot see an unfinished copy. Concurrent requests reuse the committed one.
     save_book(book)
-    cached.write_text(json.dumps({"book_id": book["id"]}))
-    if OPENAI_API_KEY:
-        start_ai_cast(book["id"])   # classics benefit most; cheap with gpt-4o-mini
+    try:
+        selected = attach_book(new_id, owner, book["title"], book["author"], book["cover"],
+                               unlocked=True, catalog_source=source)
+    except Exception:
+        remove_book(new_id)
+        raise
+    if selected != new_id:
+        remove_book(new_id)
+        book = load_book(selected)
     return summary(book)
 
 
@@ -1003,45 +955,6 @@ def ai_cast_status(request: Request, book_id: str):
     chars = sum(len(l["text"]) for l in book["lines"])
     cost = chars / 4 * 0.15e-6 + dialogue * 25 * 0.6e-6     # gpt-4o-mini list prices
     return {"state": "none", "dialogue": dialogue, "cost": max(round(cost, 2), 0.01)}
-
-
-FEATURED = [("Pride and Prejudice", "Austen"), ("The Adventures of Sherlock Holmes", "Doyle"),
-            ("Dracula", "Stoker"), ("Alice's Adventures in Wonderland", "Carroll"),
-            ("Treasure Island", "Stevenson"), ("Frankenstein", "Shelley"),
-            ("The Picture of Dorian Gray", "Wilde"), ("A Christmas Carol", "Dickens"),
-            ("The Wonderful Wizard of Oz", "Baum"), ("Little Women", "Alcott"),
-            ("The Importance of Being Earnest", "Wilde"), ("Peter Pan", "Barrie"),
-            ("The Hound of the Baskervilles", "Doyle"), ("Emma", "Austen"),
-            ("The Time Machine", "Wells"), ("Anne of Green Gables", "Montgomery")]
-_featured = {"t": 0.0, "items": []}
-
-
-@app.get("/api/library/featured")
-async def library_featured():
-    import time
-    if _featured["items"] and time.time() - _featured["t"] < 86400:
-        return {"items": _featured["items"]}
-
-    async def one(c, title, author):
-        params = {"q": f'intitle:"{title}" inauthor:{author}', "filter": "free-ebooks",
-                  "printType": "books", "maxResults": 5}
-        if GOOGLE_BOOKS_API_KEY:
-            params["key"] = GOOGLE_BOOKS_API_KEY
-        try:
-            r = await c.get(GB_URL, params=params)
-            items = r.json().get("items", []) if r.status_code == 200 else []
-        except Exception:
-            items = []
-        books = [gb_item(v) for v in items]
-        return next((b for b in books if b["cover"]), books[0] if books else None)
-
-    async with httpx.AsyncClient(timeout=15) as c:
-        found = await asyncio.gather(*(one(c, t, a) for t, a in FEATURED))
-    items = [b for b in found if b]
-    if not items:
-        raise HTTPException(502, "The library is unavailable right now. Try again in a moment.")
-    _featured.update(t=time.time(), items=items)
-    return {"items": items}
 
 
 @app.get("/api/books/{book_id}/lines")

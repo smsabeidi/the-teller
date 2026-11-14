@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 COOKIE = "voiceemo_session"
 SESSION_AGE = 90 * 24 * 60 * 60
+PERSONAL_OWNER = "teller-personal"
 CHALLENGE_AGE = 15 * 60
 OAUTH = {
     "google": {
@@ -72,6 +73,12 @@ CREATE TABLE IF NOT EXISTS personal_books (
     deleted INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS personal_books_by_owner ON personal_books(owner_id, deleted, created_at);
+CREATE TABLE IF NOT EXISTS catalog_books (
+    owner_id TEXT NOT NULL REFERENCES owners(id),
+    source TEXT NOT NULL,
+    book_id TEXT NOT NULL REFERENCES personal_books(id) ON DELETE CASCADE,
+    PRIMARY KEY (owner_id, source)
+);
 CREATE TABLE IF NOT EXISTS sign_in_challenges (
     digest TEXT PRIMARY KEY,
     session_digest TEXT NOT NULL REFERENCES browser_sessions(digest) ON DELETE CASCADE,
@@ -191,6 +198,8 @@ def credentials(provider: str) -> tuple[str, str]:
 
 
 def auth_providers() -> list[str]:
+    if personal_mode():
+        return []
     if not base_url():
         return []
     providers = [provider for provider in OAUTH if all(credentials(provider))]
@@ -199,8 +208,12 @@ def auth_providers() -> list[str]:
     return providers
 
 
+def personal_mode() -> bool:
+    return setting("TELLER_PERSONAL_MODE") == "1"
+
+
 def billing_enabled() -> bool:
-    return bool(base_url() and setting("STRIPE_SECRET_KEY") and setting("STRIPE_WEBHOOK_SECRET")
+    return bool(not personal_mode() and base_url() and setting("STRIPE_SECRET_KEY") and setting("STRIPE_WEBHOOK_SECRET")
                 and (setting("STRIPE_BOOK_PRICE_ID") or configured_plans()))
 
 
@@ -223,7 +236,13 @@ def session(request: Request) -> sqlite3.Row | None:
         return request.state.voiceemo_session
     cookie = request.cookies.get(COOKIE, "")
     row = None
-    if re.fullmatch(r"[A-Za-z0-9_-]{43}", cookie):
+    if getattr(request.state, "teller_personal", False):
+        with database() as db:
+            row = db.execute("SELECT *, NULL AS digest FROM owners WHERE id=?", (PERSONAL_OWNER,)).fetchone()
+            if row is None:
+                db.execute("INSERT OR IGNORE INTO owners(id, name) VALUES (?, ?)", (PERSONAL_OWNER, "Personal library"))
+                row = db.execute("SELECT *, NULL AS digest FROM owners WHERE id=?", (PERSONAL_OWNER,)).fetchone()
+    elif re.fullmatch(r"[A-Za-z0-9_-]{43}", cookie):
         with database() as db:
             row = db.execute(
                 "SELECT o.*, s.digest FROM browser_sessions s JOIN owners o ON o.id=s.owner_id "
@@ -255,14 +274,37 @@ def browser_owner(request: Request, response: Response) -> str:
     return owner_id
 
 
-def attach_book(book_id: str, owner_id: str, title: str, author: str = "", cover: str = "") -> None:
+def attach_book(book_id: str, owner_id: str, title: str, author: str = "", cover: str = "", *,
+                unlocked: bool = False, catalog_source: str | None = None) -> str:
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
         owner = db.execute("SELECT merged_into FROM owners WHERE id=?", (owner_id,)).fetchone()
+        owner_id = owner["merged_into"] or owner_id
+        if catalog_source:
+            current = db.execute(
+                "SELECT c.book_id FROM catalog_books c JOIN personal_books b ON b.id=c.book_id "
+                "WHERE c.owner_id=? AND c.source=? AND b.deleted=0",
+                (owner_id, catalog_source),
+            ).fetchone()
+            if current:
+                return current["book_id"]
         db.execute(
-            "INSERT INTO personal_books(id, owner_id, title, author, cover, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (book_id, owner["merged_into"] or owner_id, title, author, cover, int(time.time())),
+            "INSERT INTO personal_books(id, owner_id, title, author, cover, created_at, unlocked) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (book_id, owner_id, title, author, cover, int(time.time()), int(unlocked)),
         )
+        if catalog_source:
+            db.execute("INSERT OR REPLACE INTO catalog_books VALUES (?, ?, ?)", (owner_id, catalog_source, book_id))
+        return book_id
+
+
+def owned_catalog_book(owner_id: str, source: str) -> str | None:
+    with database() as db:
+        row = db.execute(
+            "SELECT c.book_id FROM catalog_books c JOIN personal_books b ON b.id=c.book_id "
+            "WHERE c.owner_id=? AND c.source=? AND b.deleted=0",
+            (owner_id, source),
+        ).fetchone()
+    return row["book_id"] if row else None
 
 
 def require_book(request: Request, book_id: str, *, allow_public: bool = True) -> sqlite3.Row | None:
@@ -310,7 +352,8 @@ def account_status(request: Request, response: Response):
     checkout_enabled = billing_enabled()
     plans = [{key: value for key, value in plan.items() if key != "price_id"}
              for plan in configured_plans().values()] if checkout_enabled else []
-    return {"signed_in": current["provider"] is not None, "email": current["email"], "name": current["name"],
+    return {"signed_in": current["provider"] is not None or bool(getattr(request.state, "teller_personal", False)),
+            "personal_mode": bool(getattr(request.state, "teller_personal", False)), "email": current["email"], "name": current["name"],
             "providers": auth_providers(), "billing_enabled": checkout_enabled, "plans": plans, "credits": balance,
             "one_off_available": checkout_enabled and bool(setting("STRIPE_BOOK_PRICE_ID")),
             "can_manage_billing": bool(base_url() and setting("STRIPE_SECRET_KEY") and stripe_customer),
