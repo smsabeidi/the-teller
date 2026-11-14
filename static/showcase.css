@@ -1,0 +1,221 @@
+.voice-showcase {
+  margin: 18px 0 0;
+}
+
+.voice-showcase__header,
+.voice-showcase__nav,
+.voice-showcase__controls {
+  display: flex;
+  align-items: center;
+}
+
+.voice-showcase__progress {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+  color: #fff8ee;
+  font-size: .75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.voice-showcase__header {
+  gap: 20px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.voice-showcase__link {
+  color: var(--text2);
+  font-size: .85rem;
+  text-decoration: none;
+}
+
+.voice-showcase__link:hover {
+  color: var(--accent);
+}
+
+.voice-showcase button {
+  background: transparent;
+}
+
+.voice-showcase__nav {
+  gap: 8px;
+  flex-shrink: 0;
+  color: var(--text2, #a1a1a1);
+  font-size: .8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.voice-showcase__arrow {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line, #262626);
+  border-radius: 50%;
+  color: var(--text, #fafafa);
+  font: 1.5rem/1 system-ui, sans-serif;
+}
+
+.voice-showcase__arrow:hover {
+  background: var(--fill, #1c1c1e);
+}
+
+.voice-showcase__card {
+  --voice-color: #b35a39;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  border: 1px solid var(--line, #262626);
+  border-radius: 20px;
+  overflow: hidden;
+  background: var(--raised, #0f0f0f);
+}
+
+.voice-showcase__story {
+  display: flex;
+  flex-direction: column;
+  justify-content: end;
+  gap: 8px;
+  min-width: 0;
+  min-height: 238px;
+  padding: clamp(22px, 4vw, 34px);
+  color: #fff8ee;
+  background: radial-gradient(ellipse at 10% 5%, var(--voice-color), transparent 72%),
+    linear-gradient(140deg, #333039, #191719 75%);
+}
+
+.voice-showcase__genre {
+  color: #f5ddce;
+  font-size: .75rem;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.voice-showcase__story h3 {
+  font-family: "Instrument Serif", Georgia, serif;
+  font-size: clamp(1.9rem, 4vw, 3.3rem);
+  font-weight: 400;
+  line-height: 1.02;
+  letter-spacing: -.02em;
+}
+
+.voice-showcase__controls {
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.voice-showcase__play {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: #fff8ee;
+  color: #211b1a;
+  border: 0;
+}
+
+.voice-showcase__play::before {
+  content: '';
+  width: 0;
+  height: 0;
+  margin-left: 3px;
+  border-block: 7px solid transparent;
+  border-left: 11px solid currentColor;
+}
+
+.voice-showcase__play[data-playing="true"]::before {
+  width: 11px;
+  height: 14px;
+  margin-left: 0;
+  border: 0;
+  border-inline: 3px solid currentColor;
+}
+
+.voice-showcase__play:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+.voice-showcase__controls input {
+  appearance: none;
+  flex: 1;
+  min-width: 0;
+  height: 5px;
+  margin: 0;
+  border-radius: 999px;
+  background: linear-gradient(to right, #fff8ee var(--voice-progress, 0%), #a0919b var(--voice-progress, 0%));
+  cursor: pointer;
+}
+
+.voice-showcase__controls input::-webkit-slider-thumb {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff8ee;
+}
+
+.voice-showcase__controls input::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff8ee;
+}
+
+.voice-showcase__status {
+  font-size: .8rem;
+  line-height: 1.4;
+}
+
+.voice-showcase__transcript {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 13px;
+  list-style: none;
+}
+
+.voice-showcase__transcript button {
+  display: grid;
+  grid-template-columns: minmax(78px, 1fr) minmax(0, 4fr);
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--text2, #a1a1a1);
+  font-size: .9rem;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.voice-showcase__transcript button:hover,
+.voice-showcase__transcript button[aria-current="true"] {
+  background: var(--fill, #1c1c1e);
+  color: var(--text, #fafafa);
+}
+
+.voice-showcase__speaker {
+  font-weight: 650;
+}
+
+.voice-showcase :is(button, input):focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+@media (max-width: 650px) {
+  .voice-showcase__card {
+    grid-template-columns: 1fr;
+  }
+
+  .voice-showcase__story {
+    min-height: 168px;
+  }
+}

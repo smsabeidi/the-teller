@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111310">
+  <title>VoiceEmo Studio — Full-cast audiobooks</title>
+  <link rel="stylesheet" href="/static/studio.css">
+  <link rel="stylesheet" href="/static/showcase.css">
+  <script defer src="/static/showcase.js"></script>
+  <script defer src="/static/studio.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="shell site-nav">
+      <a class="brand" href="/" aria-label="VoiceEmo Studio home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>VoiceEmo<span> Studio</span></a>
+      <nav aria-label="Main navigation"><a href="#performances">Listen</a><a href="#my-library">My library</a><button type="button" id="account-button" hidden>Sign in</button></nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero" id="bring-a-story" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <h1 id="hero-title">Every story.<br> <em>A whole cast.</em></h1>
+        <p>Turn stories into audiobooks with a narrator and a different voice for each character.</p>
+      </div>
+      <div class="hero-art" aria-hidden="true"><div id="wave"></div></div>
+
+      <form id="import-form" class="import-form">
+        <div class="mode-tabs" aria-label="Story source">
+          <button type="button" data-mode="link" aria-pressed="true">Story link</button>
+          <button type="button" data-mode="file" aria-pressed="false">Upload a file</button>
+          <button type="button" data-mode="text" aria-pressed="false">Paste text</button>
+        </div>
+        <div class="import-body">
+          <div data-panel="link">
+            <label for="story-link">Link to your story</label>
+            <input type="text" id="story-link" name="url" inputmode="url" placeholder="https://…" autocomplete="off">
+            <p class="input-hint">Public stories on Wattpad, AO3, Reddit, Substack and other sites.</p>
+          </div>
+          <div data-panel="file" hidden>
+            <label for="story-file" id="dropzone"><strong id="file-label">Choose a file or drag it here</strong><span>EPUB, PDF, DOCX, TXT · up to 100 MB</span></label>
+            <input class="visually-hidden" type="file" name="file" id="story-file" accept=".epub,.pdf,.docx,.txt">
+          </div>
+          <div data-panel="text" hidden>
+            <label for="story-text">Your story</label>
+            <textarea id="story-text" name="text" rows="6" placeholder="Paste the story you want to hear…"></textarea>
+          </div>
+          <div class="import-footer">
+            <p id="import-status" role="status">Free preview. No account or card required.</p>
+            <button type="submit" class="primary" id="import-submit">Create preview <span aria-hidden="true">→</span></button>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <section id="performances" class="section" aria-labelledby="sample-title">
+      <div class="section-heading"><h2 id="sample-title">Take a listen</h2><p>Hear how the cast brings a scene to life.</p></div>
+      <div id="showcase"></div>
+    </section>
+
+    <section id="my-library" class="section" aria-labelledby="library-title">
+      <div class="section-heading"><h2 id="library-title">My library</h2><p id="library-info">Open a story to pick up where you left off.</p></div>
+      <div id="my-books" class="my-books" aria-live="polite"></div>
+    </section>
+
+    <section id="catalog" class="section" aria-labelledby="catalog-title">
+      <div class="section-heading"><h2 id="catalog-title">Explore classics</h2><p>Discover public-domain books to listen to.</p></div>
+      <form id="catalog-search" class="catalog-search" role="search">
+        <label for="catalog-query" class="visually-hidden">Search classics</label>
+        <input id="catalog-query" type="search" placeholder="Search by title or author">
+        <button type="submit" class="secondary">Search</button>
+      </form>
+      <p id="catalog-status" role="status"></p>
+      <div id="catalog-books" class="catalog-books"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="shell"><a href="#bring-a-story">VoiceEmo Studio</a><a href="#bring-a-story">Create a preview ↑</a></div></footer>
+
+  <div class="mini-player" id="mini-player" hidden>
+    <button id="mini-open" type="button"><strong id="mini-title"></strong><span id="mini-speaker"></span></button>
+    <button class="round" type="button" id="mini-play" aria-label="Play">▶</button>
+  </div>
+
+  <dialog id="player" aria-labelledby="player-title">
+    <div class="player-inner">
+      <header class="player-heading">
+        <div><p id="player-mode"></p><h2 id="player-title">Audiobook player</h2><p id="player-author"></p></div>
+        <button type="button" id="player-close" class="round close-button" aria-label="Close player">×</button>
+      </header>
+      <div class="player-content">
+        <div id="transcript" class="transcript" aria-label="Transcript"></div>
+        <aside class="player-aside" aria-label="Audiobook options">
+          <label for="chapter" id="chapter-label">Chapter</label><select id="chapter"></select>
+          <details id="casting"><summary>Cast &amp; voices</summary><div id="cast-voices"></div></details>
+          <button id="check-cast" class="secondary" type="button" hidden>Check casting</button>
+          <button id="export" class="secondary" type="button" hidden>Export audiobook</button>
+          <a id="download" class="secondary" hidden>Download audiobook ZIP</a>
+          <p id="job-status" role="status"></p>
+        </aside>
+      </div>
+      <div class="player-controls">
+        <div class="seek-row"><label for="seek" class="visually-hidden">Seek by transcript line</label><input id="seek" type="range" min="0" value="0"><span id="position"></span></div>
+        <div class="transport">
+          <label for="speed" class="visually-hidden">Playback speed</label>
+          <select id="speed" aria-label="Playback speed"><option value=".75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select>
+          <button id="previous" class="round" type="button" aria-label="Previous line">‹</button>
+          <button id="play" class="primary round" type="button" aria-label="Play">▶</button>
+          <button id="next" class="round" type="button" aria-label="Next line">›</button>
+        </div>
+        <div class="unlock-row" id="unlock-row" hidden>
+          <p id="unlock-message" role="status"></p>
+          <label id="purchase-option" hidden>Unlock with<select id="purchase-plan"></select></label>
+          <button type="button" class="primary" id="unlock">Continue to full audiobook</button>
+        </div>
+        <p id="player-status" role="status"></p>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="account" aria-labelledby="account-title">
+    <div class="account-inner">
+      <header class="player-heading"><h2 id="account-title">Sign in</h2><button type="button" id="account-close" class="round close-button" aria-label="Close account">×</button></header>
+      <div id="sign-in-options"></div>
+      <form id="email-form" hidden>
+        <label for="email">Email address</label>
+        <input type="email" id="email" autocomplete="email" required>
+        <button class="primary" type="submit">Send sign-in link</button>
+      </form>
+      <button class="secondary" type="button" id="logout" hidden>Sign out</button>
+      <button class="secondary" type="button" id="manage-billing" hidden>Manage billing</button>
+      <form id="subscribe-form" hidden>
+        <label for="subscribe-plan">Audiobook plan</label>
+        <select id="subscribe-plan"></select>
+        <button class="primary" type="submit">Continue to checkout</button>
+      </form>
+      <p id="account-status" role="status"></p>
+    </div>
+  </dialog>
+
+  <p id="notice" role="status" hidden></p>
+  <audio id="audio" preload="none"></audio>
+</body>
+</html>
